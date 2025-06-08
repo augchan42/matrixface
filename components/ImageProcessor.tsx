@@ -1,36 +1,27 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import { applyMatrixEffect, addCRTDistortion, MatrixEffectOptions } from '../lib/imageProcessing';
+import { WebGLMatrixEffect } from '../lib/imageProcessing';
 import ControlPanel from './ControlPanel';
 import ImageUploader from './ImageUploader';
 
-interface ProcessorSettings extends MatrixEffectOptions {
-    useAmber: boolean;
-    useCRTDistortion: boolean;
-    curvature: number;
-    vignetteIntensity: number;
-    glowIntensity: number;
-    scanlineIntensity: number;
+interface ProcessorSettings {
+    colorShift: number;
+    contrast: number;
+    brightness: number;
 }
 
 const ImageProcessor: React.FC = () => {
     const [originalImage, setOriginalImage] = useState<HTMLImageElement | null>(null);
-    const [processedImageData, setProcessedImageData] = useState<ImageData | null>(null);
     const [loading, setLoading] = useState(false);
     const originalCanvasRef = useRef<HTMLCanvasElement>(null);
     const resultCanvasRef = useRef<HTMLCanvasElement>(null);
+    const webglEffect = useRef<WebGLMatrixEffect | null>(null);
 
     const [settings, setSettings] = useState<ProcessorSettings>({
-        mappingIntensity: 0.95,
+        colorShift: 0.3,
         contrast: 1.4,
         brightness: 1.1,
-        glowIntensity: 0.3,
-        scanlineIntensity: 0.15,
-        useAmber: false,
-        useCRTDistortion: true,
-        curvature: 0.02,
-        vignetteIntensity: 0.3,
     });
 
     const drawImageToCanvas = (canvas: HTMLCanvasElement, image: HTMLImageElement) => {
@@ -53,62 +44,44 @@ const ImageProcessor: React.FC = () => {
     };
 
     const processImage = () => {
-        if (!originalImage || !originalCanvasRef.current) return;
-
+        if (!originalImage || !webglEffect.current) return;
         setLoading(true);
-
-        drawImageToCanvas(originalCanvasRef.current, originalImage);
-        const originalCtx = originalCanvasRef.current.getContext('2d');
-        if (!originalCtx) {
-            setLoading(false);
-            return;
-        }
-
-        const originalImageData = originalCtx.getImageData(0, 0, originalCanvasRef.current.width, originalCanvasRef.current.height);
-
-        setTimeout(() => {
-            const { useAmber, useCRTDistortion, curvature, vignetteIntensity, ...matrixOptions } = settings;
-            
-            let newImageData = applyMatrixEffect(originalImageData, matrixOptions, useAmber);
-            
-            if (useCRTDistortion) {
-                newImageData = addCRTDistortion(newImageData, curvature, vignetteIntensity);
-            }
-
-            setProcessedImageData(newImageData);
-            setLoading(false);
-        }, 100);
+        webglEffect.current.processImage(originalImage, settings);
+        setLoading(false);
     };
 
     const downloadResult = () => {
-        if (!resultCanvasRef.current) return;
+        if (!webglEffect.current) return;
+        const canvas = webglEffect.current.getCanvas();
         const link = document.createElement('a');
         link.download = 'matrix_style_photo.png';
-        link.href = resultCanvasRef.current.toDataURL();
+        link.href = canvas.toDataURL();
         link.click();
     };
+    
+    useEffect(() => {
+        if (resultCanvasRef.current && !webglEffect.current) {
+            try {
+                webglEffect.current = new WebGLMatrixEffect(resultCanvasRef.current);
+            } catch (error) {
+                console.error(error);
+                alert("It seems your browser doesn't support WebGL, which is required for this effect.");
+            }
+        }
+    }, []);
 
     useEffect(() => {
         if (originalImage && originalCanvasRef.current) {
             drawImageToCanvas(originalCanvasRef.current, originalImage);
+        }
+        if (originalImage && webglEffect.current) {
             processImage();
         }
     }, [originalImage]);
-
-    useEffect(() => {
-        if (processedImageData && resultCanvasRef.current) {
-            const resultCtx = resultCanvasRef.current.getContext('2d');
-            if(resultCtx) {
-                resultCanvasRef.current.width = processedImageData.width;
-                resultCanvasRef.current.height = processedImageData.height;
-                resultCtx.putImageData(processedImageData, 0, 0);
-            }
-        }
-    }, [processedImageData]);
     
     useEffect(() => {
-        if (originalImage) {
-            const handler = setTimeout(() => processImage(), 100);
+        if (originalImage && webglEffect.current) {
+            const handler = setTimeout(() => processImage(), 50); // Debounce for performance
             return () => clearTimeout(handler);
         }
     }, [settings, originalImage]);
@@ -150,4 +123,4 @@ const ImageProcessor: React.FC = () => {
     );
 };
 
-export default ImageProcessor; 
+export default ImageProcessor;

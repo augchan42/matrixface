@@ -1,221 +1,204 @@
-export interface MatrixEffectOptions {
-  mappingIntensity: number;
-  contrast: number;
-  brightness: number;
-  glowIntensity?: number;
-  scanlineIntensity?: number;
-}
+// WebGL-based Matrix effect with proper multi-color support
+export class WebGLMatrixEffect {
+  private gl: WebGLRenderingContext;
+  private program: WebGLProgram;
+  private canvas: HTMLCanvasElement;
 
-function lerp(a: number, b: number, t: number): number {
-  return a * (1 - t) + b * t;
-}
-
-// Enhanced color ramp for retro CRT phosphor green effect
-const colorRamp = [
-  { stop: 0, color: [0, 8, 0] }, // Deep black with slight green tint
-  { stop: 30, color: [0, 20, 5] }, // Very dark green
-  { stop: 60, color: [5, 40, 10] }, // Dark phosphor green
-  { stop: 100, color: [15, 80, 20] }, // Mid-dark green
-  { stop: 140, color: [30, 120, 40] }, // Classic terminal green
-  { stop: 180, color: [60, 180, 70] }, // Bright phosphor green
-  { stop: 220, color: [100, 220, 110] }, // Very bright green
-  { stop: 255, color: [150, 255, 160] }, // Peak phosphor glow
-];
-
-// Alternative vintage amber/orange CRT palette
-const amberRamp = [
-  { stop: 0, color: [10, 5, 0] },
-  { stop: 40, color: [40, 20, 0] },
-  { stop: 80, color: [80, 40, 5] },
-  { stop: 120, color: [140, 70, 10] },
-  { stop: 160, color: [200, 100, 15] },
-  { stop: 200, color: [240, 140, 20] },
-  { stop: 255, color: [255, 180, 30] },
-];
-
-export function applyMatrixEffect(
-  originalImageData: ImageData,
-  options: MatrixEffectOptions,
-  useAmber: boolean = false
-): ImageData {
-  const {
-    mappingIntensity,
-    contrast,
-    brightness,
-    glowIntensity = 0.3,
-    scanlineIntensity = 0.15,
-  } = options;
-
-  const newImageData = new ImageData(
-    originalImageData.width,
-    originalImageData.height
-  );
-  const data = newImageData.data;
-  const originalData = originalImageData.data;
-  const width = originalImageData.width;
-  const height = originalImageData.height;
-
-  // Choose color palette
-  const activeRamp = useAmber ? amberRamp : colorRamp;
-
-  // First pass: apply color mapping
-  for (let i = 0; i < originalData.length; i += 4) {
-    const r = originalData[i];
-    const g = originalData[i + 1];
-    const b = originalData[i + 2];
-    const a = originalData[i + 3];
-
-    // Convert to grayscale with adjusted weights for better contrast
-    const gray = 0.299 * r + 0.587 * g + 0.114 * b;
-
-    // Apply a slight S-curve for more dramatic contrast
-    const curveGray = Math.pow(gray / 255, 0.8) * 255;
-
-    // Find the appropriate color stops
-    let c1, c2;
-    for (let j = 0; j < activeRamp.length - 1; j++) {
-      if (
-        curveGray >= activeRamp[j].stop &&
-        curveGray <= activeRamp[j + 1].stop
-      ) {
-        c1 = activeRamp[j];
-        c2 = activeRamp[j + 1];
-        break;
-      }
-    }
-
-    if (!c1 || !c2) {
-      if (curveGray < activeRamp[0].stop) {
-        c1 = activeRamp[0];
-        c2 = activeRamp[0];
-      } else {
-        c1 = activeRamp[activeRamp.length - 1];
-        c2 = activeRamp[activeRamp.length - 1];
-      }
-    }
-
-    const t = c1 === c2 ? 0 : (curveGray - c1.stop) / (c2.stop - c1.stop);
-
-    const mappedR = lerp(c1.color[0], c2.color[0], t);
-    const mappedG = lerp(c1.color[1], c2.color[1], t);
-    const mappedB = lerp(c1.color[2], c2.color[2], t);
-
-    // Blend with original grayscale based on mapping intensity
-    let finalR = lerp(gray, mappedR, mappingIntensity);
-    let finalG = lerp(gray, mappedG, mappingIntensity);
-    let finalB = lerp(gray, mappedB, mappingIntensity);
-
-    // Apply contrast and brightness adjustments
-    finalR = ((finalR - 128) * contrast + 128) * brightness;
-    finalG = ((finalG - 128) * contrast + 128) * brightness;
-    finalB = ((finalB - 128) * contrast + 128) * brightness;
-
-    // Store pixel data
-    data[i] = Math.max(0, Math.min(255, finalR));
-    data[i + 1] = Math.max(0, Math.min(255, finalG));
-    data[i + 2] = Math.max(0, Math.min(255, finalB));
-    data[i + 3] = a;
+  constructor(canvas: HTMLCanvasElement) {
+    this.canvas = canvas;
+    const gl =
+      canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
+    if (!gl) throw new Error("WebGL not supported");
+    this.gl = gl as WebGLRenderingContext;
+    this.program = this.createShaderProgram();
   }
 
-  // Second pass: add CRT effects
-  const tempData = new Uint8ClampedArray(data);
-
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const idx = (y * width + x) * 4;
-
-      // Add horizontal scanlines
-      const scanline = y % 3 === 0 ? 1 - scanlineIntensity : 1;
-
-      // Add phosphor glow bloom effect
-      let glowR = tempData[idx];
-      let glowG = tempData[idx + 1];
-      let glowB = tempData[idx + 2];
-
-      // Sample neighboring pixels for glow
-      const sampleRadius = 2;
-      let glowSamples = 0;
-
-      for (let dy = -sampleRadius; dy <= sampleRadius; dy++) {
-        for (let dx = -sampleRadius; dx <= sampleRadius; dx++) {
-          const sx = x + dx;
-          const sy = y + dy;
-
-          if (sx >= 0 && sx < width && sy >= 0 && sy < height) {
-            const sIdx = (sy * width + sx) * 4;
-            const distance = Math.sqrt(dx * dx + dy * dy);
-            const weight = Math.max(0, 1 - distance / sampleRadius);
-
-            glowR += tempData[sIdx] * weight * glowIntensity;
-            glowG += tempData[sIdx + 1] * weight * glowIntensity;
-            glowB += tempData[sIdx + 2] * weight * glowIntensity;
-            glowSamples += weight;
-          }
-        }
-      }
-
-      if (glowSamples > 0) {
-        glowR /= 1 + glowSamples * glowIntensity;
-        glowG /= 1 + glowSamples * glowIntensity;
-        glowB /= 1 + glowSamples * glowIntensity;
-      }
-
-      // Apply scanline and glow effects
-      data[idx] = Math.min(255, glowR * scanline);
-      data[idx + 1] = Math.min(255, glowG * scanline);
-      data[idx + 2] = Math.min(255, glowB * scanline);
+  private vertexShaderSource = `
+    attribute vec2 a_position;
+    attribute vec2 a_texCoord;
+    varying vec2 v_texCoord;
+    
+    void main() {
+      gl_Position = vec4(a_position, 0.0, 1.0);
+      v_texCoord = a_texCoord;
     }
+  `;
+
+  private fragmentShaderSource = `
+    precision mediump float;
+    varying vec2 v_texCoord;
+    uniform sampler2D u_image;
+    uniform float u_colorShift;
+    uniform float u_contrast;
+    uniform float u_brightness;
+    uniform float u_time;
+
+    // --- HSV/RGB Conversion Functions ---
+    vec3 rgb2hsv(vec3 c){
+        vec4 K = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
+        vec4 p = mix(vec4(c.bg, K.wz), vec4(c.gb, K.xy), step(c.b, c.g));
+        vec4 q = mix(vec4(p.xyw, c.r), vec4(c.r, p.yzx), step(p.x, c.r));
+        float d = q.x - min(q.w, q.y);
+        float e = 1.0e-10;
+        return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
+    }
+
+    vec3 hsv2rgb(vec3 c){
+        vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+        vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
+        return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
+    }
+    
+    void main() {
+      vec4 texColor = texture2D(u_image, v_texCoord);
+
+      // --- Get Color Properties ---
+      vec3 hsv = rgb2hsv(texColor.rgb);
+      float lum = dot(texColor.rgb, vec3(0.299, 0.587, 0.114));
+      
+      // --- Aggressive Highlight Protection ---
+      // This is the key to preventing blue dots. It creates a strong mask for any
+      // bright, desaturated pixel (like teeth and shirt collars).
+      float whiteMask = smoothstep(0.7, 0.9, lum) * (1.0 - smoothstep(0.0, 0.2, hsv.y));
+
+      // --- Build Color from a Stable Green Base ---
+      
+      // 1. Create the base green by blending the original green channel with a target Matrix green.
+      vec3 matrixGreen = vec3(0.1, 0.8, 0.2);
+      vec3 baseColor = mix(vec3(lum), matrixGreen, lum); // Start with grayscale and blend to green
+      baseColor.g = max(baseColor.g, texColor.g); // Ensure original green intensity is respected
+
+      // 2. Additively blend back original red and blue, controlled by colorShift.
+      // This provides color variation without corrupting the hue.
+      baseColor.r += texColor.r * u_colorShift * 0.5;
+      baseColor.b += texColor.b * u_colorShift * 0.7;
+
+      // --- Blend back the original white areas ---
+      // This uses the highlight mask to force bright areas back to their original color.
+      vec3 finalColor = mix(baseColor, texColor.rgb, whiteMask);
+
+      // --- Post-Processing ---
+      finalColor = (finalColor - 0.5) * u_contrast + 0.5;
+      finalColor *= u_brightness;
+      
+      // Subtle Scanlines
+      finalColor *= 1.0 - abs(sin(v_texCoord.y * 400.0)) * 0.08;
+      
+      gl_FragColor = vec4(clamp(finalColor, 0.0, 1.0), texColor.a);
+    }
+  `;
+
+  private createShader(type: number, source: string): WebGLShader {
+    const shader = this.gl.createShader(type);
+    if (!shader) throw new Error("Could not create shader");
+
+    this.gl.shaderSource(shader, source);
+    this.gl.compileShader(shader);
+
+    if (!this.gl.getShaderParameter(shader, this.gl.COMPILE_STATUS)) {
+      const info = this.gl.getShaderInfoLog(shader);
+      this.gl.deleteShader(shader);
+      throw new Error("Shader compilation error: " + info);
+    }
+
+    return shader;
   }
 
-  return newImageData;
-}
+  private createShaderProgram(): WebGLProgram {
+    const vertexShader = this.createShader(
+      this.gl.VERTEX_SHADER,
+      this.vertexShaderSource
+    );
+    const fragmentShader = this.createShader(
+      this.gl.FRAGMENT_SHADER,
+      this.fragmentShaderSource
+    );
 
-// Additional function for adding CRT distortion effects
-export function addCRTDistortion(
-  imageData: ImageData,
-  curvature: number = 0.02,
-  vignetteIntensity: number = 0.3
-): ImageData {
-  const newImageData = new ImageData(imageData.width, imageData.height);
-  const data = newImageData.data;
-  const originalData = imageData.data;
-  const width = imageData.width;
-  const height = imageData.height;
-  const centerX = width / 2;
-  const centerY = height / 2;
+    const program = this.gl.createProgram();
+    if (!program) throw new Error("Could not create program");
 
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      // Barrel distortion for CRT curvature
-      const dx = (x - centerX) / centerX;
-      const dy = (y - centerY) / centerY;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      const factor = 1 + dist * dist * curvature;
+    this.gl.attachShader(program, vertexShader);
+    this.gl.attachShader(program, fragmentShader);
+    this.gl.linkProgram(program);
 
-      const srcX = Math.floor(centerX + (x - centerX) / factor);
-      const srcY = Math.floor(centerY + (y - centerY) / factor);
-
-      const idx = (y * width + x) * 4;
-
-      if (srcX >= 0 && srcX < width && srcY >= 0 && srcY < height) {
-        const srcIdx = (srcY * width + srcX) * 4;
-
-        // Apply vignette effect
-        const vignette = 1 - dist * vignetteIntensity;
-
-        data[idx] = originalData[srcIdx] * vignette;
-        data[idx + 1] = originalData[srcIdx + 1] * vignette;
-        data[idx + 2] = originalData[srcIdx + 2] * vignette;
-        data[idx + 3] = originalData[srcIdx + 3];
-      } else {
-        // Black outside the distortion area
-        data[idx] = 0;
-        data[idx + 1] = 0;
-        data[idx + 2] = 0;
-        data[idx + 3] = 255;
-      }
+    if (!this.gl.getProgramParameter(program, this.gl.LINK_STATUS)) {
+      const info = this.gl.getProgramInfoLog(program);
+      throw new Error("Program link error: " + info);
     }
+
+    return program;
   }
 
-  return newImageData;
+  public processImage(
+    image: HTMLImageElement | HTMLCanvasElement,
+    options: {
+      colorShift: number;
+      contrast: number;
+      brightness: number;
+    }
+  ): void {
+    const gl = this.gl;
+
+    // Set canvas size
+    this.canvas.width = image.width;
+    this.canvas.height = image.height;
+    gl.viewport(0, 0, image.width, image.height);
+
+    // Create texture from image
+    const texture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+
+    // Setup vertices
+    const vertices = new Float32Array([
+      -1, -1, 0, 1, 1, -1, 1, 1, -1, 1, 0, 0, 1, 1, 1, 0,
+    ]);
+
+    const buffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+    gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+
+    // Use shader program
+    gl.useProgram(this.program);
+
+    // Set attributes
+    const positionLocation = gl.getAttribLocation(this.program, "a_position");
+    const texCoordLocation = gl.getAttribLocation(this.program, "a_texCoord");
+
+    gl.enableVertexAttribArray(positionLocation);
+    gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 16, 0);
+
+    gl.enableVertexAttribArray(texCoordLocation);
+    gl.vertexAttribPointer(texCoordLocation, 2, gl.FLOAT, false, 16, 8);
+
+    // Set uniforms
+    gl.uniform1i(gl.getUniformLocation(this.program, "u_image"), 0);
+    gl.uniform1f(
+      gl.getUniformLocation(this.program, "u_colorShift"),
+      options.colorShift
+    );
+    gl.uniform1f(
+      gl.getUniformLocation(this.program, "u_contrast"),
+      options.contrast
+    );
+    gl.uniform1f(
+      gl.getUniformLocation(this.program, "u_brightness"),
+      options.brightness
+    );
+    gl.uniform1f(
+      gl.getUniformLocation(this.program, "u_time"),
+      Date.now() * 0.001
+    );
+
+    // Draw
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  }
+
+  public getCanvas(): HTMLCanvasElement {
+    return this.canvas;
+  }
 }
