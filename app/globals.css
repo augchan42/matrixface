@@ -1,9 +1,20 @@
+:root {
+  --background-color: #1a1a1a;
+  --text-color: #00ff00;
+  --glow-color: rgba(0, 255, 0, 0.7);
+  --border-color: #00ff00;
+  --button-background: #2a2a2a;
+  --button-hover-background: #00ff00;
+  --button-text-color: #00ff00;
+  --button-hover-text-color: #1a1a1a;
+}
+
 body {
     margin: 0;
     padding: 20px;
-    background: #000;
-    color: #0f0;
-    font-family: 'Courier New', monospace;
+    background: var(--background-color);
+    color: var(--text-color);
+    font-family: 'Pixel Operator', monospace;
     min-height: 100vh;
 }
 
@@ -14,9 +25,10 @@ body {
 
 h1 {
     text-align: center;
-    color: #0f0;
-    text-shadow: 0 0 10px #0f0;
+    color: var(--text-color);
+    text-shadow: 0 0 10px var(--glow-color);
     margin-bottom: 30px;
+    font-weight: normal;
 }
 
 .images-container {
@@ -32,14 +44,15 @@ h1 {
 }
 
 .image-section h3 {
-    color: #0f0;
+    color: var(--text-color);
     margin-bottom: 10px;
+    font-weight: normal;
 }
 
 canvas {
-    border: 2px solid #0f0;
+    border: 2px solid var(--border-color);
     max-width: 100%;
-    box-shadow: 0 0 20px rgba(0, 255, 0, 0.3);
+    box-shadow: 0 0 20px var(--glow-color);
 }
 
 .controls {
@@ -48,20 +61,21 @@ canvas {
 }
 
 button {
-    background: #000;
-    color: #0f0;
-    border: 2px solid #0f0;
+    background: var(--button-background);
+    color: var(--button-text-color);
+    border: 2px solid var(--border-color);
     padding: 10px 20px;
-    font-family: 'Courier New', monospace;
+    font-family: 'Pixel Operator', monospace;
     cursor: pointer;
     margin: 0 10px;
     transition: all 0.3s;
+    text-transform: uppercase;
 }
 
 button:hover {
-    background: #0f0;
-    color: #000;
-    box-shadow: 0 0 10px #0f0;
+    background: var(--button-hover-background);
+    color: var(--button-hover-text-color);
+    box-shadow: 0 0 15px var(--glow-color);
 }
 
 .slider-container {
@@ -73,8 +87,8 @@ button:hover {
 
 .slider-container label {
     display: inline-block;
-    width: 120px;
-    color: #0f0;
+    width: 150px;
+    color: var(--text-color);
     text-align: right;
     margin-right: 10px;
 }
@@ -86,6 +100,6 @@ input[type="range"] {
 
 .loading {
     text-align: center;
-    color: #0f0;
+    color: var(--text-color);
     font-size: 18px;
 } 

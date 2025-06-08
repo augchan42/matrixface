@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import './globals.css';
+import '../styles/fonts.css';
 
 export const metadata: Metadata = {
     title: 'Matrix Style Photo Processor',
